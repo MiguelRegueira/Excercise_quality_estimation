@@ -1,0 +1,146 @@
+---
+title: "Excercise quality estimation"
+author: "Miguel A. Regueira"
+date: "May 11, 2016"
+output: 
+  html_document:
+    keep_md: yes
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+require(knitr)
+require(ggplot2)
+require(caret)
+require(rpart)
+require(rpart.plot)
+require(RColorBrewer)
+require(rattle)
+require(randomForest)
+knitr::opts_chunk$set(echo = TRUE)
+opts_chunk$set( fig.path = 'figures/' )
+```
+
+## Executive summary
+
+In this project it is expected to estimate the quality of the exercises realized by means of different sensors.
+
+## Data loading & cleaning
+
+Load the raw data stored in folder './data', take care of different #NA formats to properly get them, remove the first column that contains the row number and set a seed for reproducible purpose:
+```{r load_data, cache=TRUE}
+training <- read.csv(file = "./data/pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(file = "./data/pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+training<-training[,2:ncol(training)]
+testing<-testing[,2:ncol(testing)]
+set.seed(20160511)
+dim(training); dim(testing)
+```
+
+Some columns has zero variability or pretty close to it, which won't help to predict any output from there, so let's remove them:
+```{r zero_variability, cache=TRUE}
+nzv <- nearZeroVar(training, saveMetrics=TRUE)
+training <- training[,nzv$nzv==FALSE]
+testing <- testing[,nzv$nzv==FALSE]
+dim(training); dim(testing)
+rm(nzv)
+```
+
+Still, some columns are not providing meaningful information. We can remove columns that mostly contains NA values, for example, let's remove those columns with more than 90% of NA values:
+```{r na_columns, cache=TRUE}
+nrow <- nrow(training)
+na <- sapply(training,function(x)sum(is.na(x))/nrow>0.9)
+training <- training[,!na]
+testing <- testing[,!na]
+dim(training); dim(testing)
+rm(na); rm(nrow)
+```
+
+Now let's convert all numeric columns to float:
+```{r matching_numeric_types, cache=TRUE}
+indx <- sapply(testing, is.integer)
+testing[indx] <- lapply(testing[indx], function(x) as.numeric(x))
+indx <- sapply(training, is.integer)
+training[indx] <- lapply(training[indx], function(x) as.numeric(x))
+testing <- testing[,-58]
+testing <- rbind(training[1, -58] , testing)
+testing <- testing[-1,]
+rm(indx)
+```
+
+
+Now let's split the training dataset in training and testing data, let's call them myTraining and myTesting:
+```{r split_training, cache=TRUE}
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+myTraining <- training[inTrain, ]; myTesting <- training[-inTrain, ]
+dim(myTraining); dim(myTesting)
+rm(inTrain)
+```
+
+## Model building
+
+Let's build 3 different models and compared them:
+
+1. Decision tree
+2. Boosting
+3. Random Forest
+
+In the following sections the process is the same, build the expected model, predict the testing samples and build the confusion matrix.
+
+### Decision tree
+
+```{r decision_tree_model}
+modFit1 <- rpart(classe ~ ., data=myTraining, method="class")
+predictions1 <- predict(modFit1, myTesting, type = "class")
+cm1 <- confusionMatrix(predictions1, myTesting$classe)
+```
+
+
+### Boosting
+
+```{r boosting_model}
+fitControl <- trainControl(method='cv', number = 3)
+modFit2 <- train(classe ~ ., data=myTraining, method="gbm", trControl=fitControl, verbose=FALSE)
+predictions2 <- predict(modFit2, myTesting)
+cm2 <- confusionMatrix(predictions2, myTesting$classe)
+```
+
+### Random forest
+
+```{r random_forest_model}
+modFit3 <- randomForest(classe ~ ., data=myTraining)
+prediction3 <- predict(modFit3, myTesting, type = "class")
+cm3 <- confusionMatrix(prediction3, myTesting$classe)
+```
+
+## Model selection
+
+In the following figure it can be observed the result of the confusion matrix of the models previously build. It can be observed that random forest provide a very good accuracy, so this is the model it will be used to predict the test samples.
+
+```{r model_result}
+plot(cm1$table, col = cm1$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cm1$overall['Accuracy'], 4)))
+plot(cm2$table, col = cm2$byClass, main = paste("Boosting Confusion Matrix: Accuracy =", round(cm2$overall['Accuracy'], 4)))
+plot(cm3$table, col = cm3$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cm3$overall['Accuracy'], 4)))
+cm3
+```
+
+## Predicting test samples
+
+Now we are ready to predict the class of the test samples using the selected model, random forest:
+
+```{r test_samples_prediction}
+prediction <- predict(modFit3, testing, type = "class")
+prediction <- data.frame(problem_id = seq(1:20),prediction = prediction)
+prediction
+```
+
+## R and package versions used
+
+Some information about the packages used, their versions, the R version, environment, etc.
+
+```{r sessionInfo, include=TRUE, echo=TRUE, results='markup'}
+library(devtools)
+devtools::session_info()
+```
